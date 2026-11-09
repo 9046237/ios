@@ -1,0 +1,82 @@
+name: HGhub 1.2.0 iOS IPA
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  ios:
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      CI: 'true'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: Minireel/HGhub
+          ref: 79827baa7542fead68919e7b45f5bfde86b18ee7
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+      - name: Prepare tools
+        run: |
+          xcodebuild -version
+          command -v xcodegen || brew install xcodegen
+          command -v pod || brew install cocoapods
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm tauri ios init --ci
+      - name: Build unsigned device archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/unsigned.xcconfig" <<'CONFIG'
+          CODE_SIGNING_ALLOWED = NO
+          CODE_SIGNING_REQUIRED = NO
+          CODE_SIGN_IDENTITY =
+          CONFIG
+          export XCODE_XCCONFIG_FILE="$RUNNER_TEMP/unsigned.xcconfig"
+          set +e
+          pnpm tauri ios build --ci --target aarch64 --export-method debugging 2>&1 | tee "$RUNNER_TEMP/ios-build.log"
+          result=${PIPESTATUS[0]}
+          set -e
+          # Signed export can fail; require a completed device archive to package.
+          app=$(find src-tauri/gen/apple -type d -path '*/Products/Applications/*.app' -print -quit)
+          if [[ -z "$app" ]]; then
+            echo "::error::No archived application found (Tauri exit: $result)"
+            exit 1
+          fi
+          export HGHUB_ARCHIVED_APP="$app"
+          python3 - <<'PY'
+          import os, pathlib, plistlib, subprocess
+          app = pathlib.Path(os.environ['HGHUB_ARCHIVED_APP'])
+          with (app / 'Info.plist').open('rb') as f:
+              info = plistlib.load(f)
+          assert info['CFBundleShortVersionString'] == '1.2.0', info
+          assert info['CFBundleIdentifier'] == 'com.hghub.huangguo', info
+          assert 'iPhoneOS' in info['CFBundleSupportedPlatforms'], info
+          subprocess.run(['lipo', '-verify_arch', 'arm64', str(app / info['CFBundleExecutable'])], check=True)
+          print('Verified device archive:', app)
+          PY
+          mkdir -p artifacts Payload
+          ditto "$app" "Payload/$(basename "$app")"
+          /usr/bin/zip -qry artifacts/HGhub_1.2.0_unsigned.ipa Payload
+          unzip -t artifacts/HGhub_1.2.0_unsigned.ipa
+          shasum -a 256 artifacts/HGhub_1.2.0_unsigned.ipa > artifacts/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HGhub-1.2.0-ios-unsigned
+          path: artifacts/*
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: ios-build-log
+          path: ${{ runner.temp }}/ios-build.log
+          if-no-files-found: ignore
