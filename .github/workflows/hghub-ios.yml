@@ -31,6 +31,18 @@ jobs:
           command -v pod || brew install cocoapods
       - run: pnpm install --frozen-lockfile
       - run: pnpm tauri ios init --ci
+      - name: Disable signing in generated Xcode project
+        run: |
+          python3 - <<'PYCODE'
+          from pathlib import Path
+          projects = list(Path('src-tauri/gen/apple').glob('*.xcodeproj/project.pbxproj'))
+          assert len(projects) == 1, projects
+          p = projects[0]
+          text = p.read_text()
+          assert 'buildSettings = {' in text
+          text = text.replace('buildSettings = {', 'buildSettings = {\nCODE_SIGNING_ALLOWED = NO;\nCODE_SIGNING_REQUIRED = NO;')
+          p.write_text(text)
+          PYCODE
       - name: Build unsigned device archive
         shell: bash
         run: |
