@@ -24,6 +24,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-ios
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          key: ios-device
+          cache-on-failure: true
       - name: Prepare tools
         run: |
           xcodebuild -version
@@ -72,7 +77,7 @@ jobs:
           assert info['CFBundleShortVersionString'] == '1.2.0', info
           assert info['CFBundleIdentifier'] == 'com.hghub.huangguo', info
           assert 'iPhoneOS' in info['CFBundleSupportedPlatforms'], info
-          subprocess.run(['lipo', '-verify_arch', 'arm64', str(app / info['CFBundleExecutable'])], check=True)
+          subprocess.run(['lipo', str(app / info['CFBundleExecutable']), '-verify_arch', 'arm64'], check=True)
           print('Verified device archive:', app)
           PY
           mkdir -p artifacts Payload
